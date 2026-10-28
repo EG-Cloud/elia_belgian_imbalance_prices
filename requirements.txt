@@ -1,2 +1,6 @@
 requests
 pandas
+time
+datetime
+psycopg[binary]
+python-dotenv
