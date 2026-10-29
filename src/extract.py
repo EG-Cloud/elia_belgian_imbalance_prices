@@ -43,9 +43,9 @@ def fetch_day(day):
     records = data["results"]
     return records
 
-# if __name__ == "__main__":
-#     records = fetch_day(date.today())
-#     print(len(records))
+if __name__ == "__main__":
+    records = fetch_day(date.today())
+    print(len(records))
 
 def fetch_range(start_date, end_date):
     """

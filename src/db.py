@@ -1,10 +1,14 @@
 import os
+from pathlib import Path  # NEW: built into Python, so in the first group
 
 import psycopg
 from dotenv import load_dotenv
 
 # Load the variables from .env into the environment
 load_dotenv()
+
+# project root, two levels above this file (src/db.py -> src -> root)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def get_connection():
@@ -38,10 +42,37 @@ def get_connection():
     conn = psycopg.connect(database_url)
     return conn
 
+def run_sql_file(file_name):
+    """
+    Execute a SQL file from the sql/ folder on the Neon database.
 
-if __name__ == "__main__":
+    The whole file runs in one transaction: it is committed at the end
+    if everything succeeds, and rolled back if an error occurs.
+
+    Args:
+        file_name (str): name of the file in the sql/ folder,
+            e.g. "01_create_raw_table.sql".
+
+    Returns:
+        None
+
+    Raises:
+        FileNotFoundError: if the file does not exist in sql/.
+        psycopg.Error: if the SQL fails on the database.
+    """
+
+    # 1. Build the path to the file in the sql/ folder
+    sql_path = PROJECT_ROOT / "sql" / file_name
+
+    # 2. Read the file as text
+    sql_text = sql_path.read_text(encoding="utf-8")
+
+    # 3. Execute the SQL (the connection "with" commits automatically at the end)
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT version()")
-            result = cur.fetchone()
-            print(result[0])
+            cur.execute(sql_text)
+
+
+if __name__ == "__main__":
+    run_sql_file("01_create_raw_table.sql")
+    print("SQL file executed")
