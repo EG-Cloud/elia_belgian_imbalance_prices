@@ -53,6 +53,7 @@ def load_period(start_date, end_date, batch_days=30):
     return records_imported
 
 if __name__ == "__main__":
-    # Test on a short period with small batches
-    total = load_period(date(2026, 10, 1), date(2026, 10, 24), batch_days=7)
+    # One-off historical load: from the first day of the dataset to yesterday
+    yesterday = date.today() - timedelta(days=1)
+    total = load_period(HISTORY_START, yesterday)
     print(f"Total: {total} rows saved")
