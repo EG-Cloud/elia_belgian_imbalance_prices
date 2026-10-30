@@ -1,5 +1,5 @@
 import os
-from pathlib import Path  # NEW: built into Python, so in the first group
+from pathlib import Path
 
 import psycopg
 from dotenv import load_dotenv
@@ -9,6 +9,26 @@ load_dotenv()
 
 # project root, two levels above this file (src/db.py -> src -> root)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+UPSERT_QUERY = """
+    INSERT INTO 
+        raw.imbalance_prices (datetime, resolutioncode, qualitystatus, ace, systemimbalance, alpha, 
+        alpha_prime, marginalincrementalprice, marginaldecrementalprice, imbalanceprice)
+    VALUES 
+        (%(datetime)s,%(resolutioncode)s,%(qualitystatus)s,%(ace)s,%(systemimbalance)s,
+        %(alpha)s,%(alpha_prime)s,%(marginalincrementalprice)s,%(marginaldecrementalprice)s,%(imbalanceprice)s)
+    ON CONFLICT (datetime) DO UPDATE SET
+        resolutioncode = EXCLUDED.resolutioncode,
+        qualitystatus = EXCLUDED.qualitystatus,
+        ace = EXCLUDED.ace,
+        systemimbalance = EXCLUDED.systemimbalance,
+        alpha = EXCLUDED.alpha,
+        alpha_prime = EXCLUDED.alpha_prime,
+        marginalincrementalprice = EXCLUDED.marginalincrementalprice,
+        marginaldecrementalprice = EXCLUDED.marginaldecrementalprice,
+        imbalanceprice = EXCLUDED.imbalanceprice,
+        loaded_at = now();
+"""
 
 
 def get_connection():
@@ -42,6 +62,7 @@ def get_connection():
     conn = psycopg.connect(database_url)
     return conn
 
+
 def run_sql_file(file_name):
     """
     Execute a SQL file from the sql/ folder on the Neon database.
@@ -73,6 +94,41 @@ def run_sql_file(file_name):
             cur.execute(sql_text)
 
 
+def upsert_records(records):
+
+    """
+    Insert or update imbalance price records in raw.imbalance_prices.
+
+    Each record is matched on its datetime (primary key):
+    a new datetime is inserted, an existing one is updated with the
+    new values, and its loaded_at is set to the current time.
+    Running it several times with the same records never creates duplicates.
+
+    Args:
+        records (list[dict]): records as returned by fetch_day or fetch_range,
+            with the 10 API keys (datetime, resolutioncode, qualitystatus, ...).
+
+    Returns:
+        int: number of records sent to the database (0 if the list is empty).
+    """
+
+    if not records:
+        return 0
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(UPSERT_QUERY, records)
+
+    return len(records)
+
 if __name__ == "__main__":
     run_sql_file("01_create_raw_table.sql")
     print("SQL file executed")
+
+if __name__ == "__main__":
+    from extract import fetch_range
+    from datetime import date
+
+    records = fetch_range(date(2026, 10, 22), date(2026, 10, 24))
+    count = upsert_records(records)
+    print(f"{count} rows upserted")
