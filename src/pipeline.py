@@ -52,8 +52,38 @@ def load_period(start_date, end_date, batch_days=30):
     # 3. Return the total
     return records_imported
 
+# if __name__ == "__main__":
+#     # One-off historical load: from the first day of the dataset to yesterday
+#     yesterday = date.today() - timedelta(days=1)
+#     total = load_period(HISTORY_START, yesterday)
+#     print(f"Total: {total} rows saved")
+
+
+# Number of recent days re-fetched every day. Elia validates month M after
+# the 15th of month M+1, so a value can change up to about 45 days later.
+DAILY_WINDOW_DAYS = 50
+
+def run_daily():
+    """
+    Daily run: re-load the last DAILY_WINDOW_DAYS days, up to yesterday.
+
+    New days are inserted, recent days are updated (provisional values
+    replaced by validated ones). Missed runs are caught up automatically,
+    as long as they fall inside the window.
+
+    Returns:
+        int: number of records sent to the database.
+    """
+
+    # 1. End of the window: yesterday (today is not published yet)
+    window_end = date.today() - timedelta(days=1)
+
+    # 2. Start of the window: DAILY_WINDOW_DAYS days in total, yesterday included
+    window_start = window_end - timedelta(days=DAILY_WINDOW_DAYS - 1)
+
+    # 3. Load the window batch by batch, and return the number of rows
+    return load_period(window_start, window_end)
+
 if __name__ == "__main__":
-    # One-off historical load: from the first day of the dataset to yesterday
-    yesterday = date.today() - timedelta(days=1)
-    total = load_period(HISTORY_START, yesterday)
+    total = run_daily()
     print(f"Total: {total} rows saved")
