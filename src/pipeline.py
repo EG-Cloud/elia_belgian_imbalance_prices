@@ -1,11 +1,19 @@
+import logging
 import sys
 from datetime import date, timedelta
 
-from extract import fetch_range
 from db import upsert_records
+from extract import fetch_range
+
+# One logger for this file ("__main__" when run directly, "pipeline" if imported)
+logger = logging.getLogger(__name__)
 
 # First day of the dataset (Belgian go-live on the MARI platform)
 HISTORY_START = date(2024, 5, 22)
+
+# Number of recent days re-fetched every day. Elia validates month M after
+# the 15th of month M+1, so a value can change up to about 45 days later.
+DAILY_WINDOW_DAYS = 50
 
 
 def load_period(start_date, end_date, batch_days=30):
@@ -44,8 +52,8 @@ def load_period(start_date, end_date, batch_days=30):
         import_size = upsert_records(records)
         records_imported = records_imported + import_size
 
-        # d. Show progress (temporary, logging comes later)
-        print(f"Batch {batch_start} to {batch_end}: {import_size} rows saved")
+        # d. Log the progress of the batch
+        logger.info(f"Batch {batch_start} to {batch_end}: {import_size} rows saved")
 
         # e. Next batch starts the day after this batch ends
         batch_start = batch_end + timedelta(days=1)
@@ -53,9 +61,6 @@ def load_period(start_date, end_date, batch_days=30):
     # 3. Return the total
     return records_imported
 
-# Number of recent days re-fetched every day. Elia validates month M after
-# the 15th of month M+1, so a value can change up to about 45 days later.
-DAILY_WINDOW_DAYS = 50
 
 def run_daily():
     """
@@ -76,7 +81,9 @@ def run_daily():
     window_start = window_end - timedelta(days=DAILY_WINDOW_DAYS - 1)
 
     # 3. Load the window batch by batch, and return the number of rows
+    logger.info(f"Daily run: {window_start} to {window_end}")
     return load_period(window_start, window_end)
+
 
 def run_history():
     """
@@ -94,11 +101,18 @@ def run_history():
     yesterday = date.today() - timedelta(days=1)
 
     # 2. Load the whole history and return the number of rows
+    logger.info(f"History run: {HISTORY_START} to {yesterday}")
     return load_period(HISTORY_START, yesterday)
 
 
 if __name__ == "__main__":
     # Usage: python src/pipeline.py [daily|history]
+
+    # 0. Configure logging once, for this file and all the imported ones
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
 
     # 1. No mode given: show the usage and stop
     if len(sys.argv) < 2:
@@ -118,4 +132,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # 4. Only reached by "daily" and "history": the else branch has stopped the program
-    print(f"Number of imported records: {imported_records}")
+    logger.info(f"Run finished: {imported_records} records sent to the database")

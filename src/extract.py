@@ -1,7 +1,11 @@
-import requests
+import logging
 import time
 from datetime import date, timedelta
 
+import requests
+
+# One logger for this file, named "extract"
+logger = logging.getLogger(__name__)
 
 # Elia Open Data endpoint for imbalance prices per quarter-hour (dataset ods134)
 API_URL = "https://opendata.elia.be/api/explore/v2.1/catalog/datasets/ods134/records"
@@ -43,9 +47,6 @@ def fetch_day(day):
     records = data["results"]
     return records
 
-if __name__ == "__main__":
-    records = fetch_day(date.today())
-    print(len(records))
 
 def fetch_range(start_date, end_date):
     """
@@ -77,8 +78,8 @@ def fetch_range(start_date, end_date):
         # b. Add them to the list
         all_records.extend(records)
 
-        # c. Show progress (temporary, logging comes later)
-        print(f"{current_day}: {len(records)} rows")
+        # c. Log the progress
+        logger.info(f"{current_day}: {len(records)} rows")
 
         # d. Pause between two calls to be polite with the API
         time.sleep(0.5)
@@ -89,6 +90,12 @@ def fetch_range(start_date, end_date):
     # 4. Return the list
     return all_records
 
+
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+
     records = fetch_range(date(2026, 10, 22), date(2026, 10, 24))
-    print(len(records))
+    print(f"Total: {len(records)} rows")
