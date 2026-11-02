@@ -1,3 +1,4 @@
+import sys
 from datetime import date, timedelta
 
 from extract import fetch_range
@@ -52,13 +53,6 @@ def load_period(start_date, end_date, batch_days=30):
     # 3. Return the total
     return records_imported
 
-# if __name__ == "__main__":
-#     # One-off historical load: from the first day of the dataset to yesterday
-#     yesterday = date.today() - timedelta(days=1)
-#     total = load_period(HISTORY_START, yesterday)
-#     print(f"Total: {total} rows saved")
-
-
 # Number of recent days re-fetched every day. Elia validates month M after
 # the 15th of month M+1, so a value can change up to about 45 days later.
 DAILY_WINDOW_DAYS = 50
@@ -84,6 +78,44 @@ def run_daily():
     # 3. Load the window batch by batch, and return the number of rows
     return load_period(window_start, window_end)
 
+def run_history():
+    """
+    Full load: fetch every day from HISTORY_START up to yesterday.
+
+    Use it once to fill an empty database, or to rebuild it from scratch.
+    Thanks to the upsert, running it on a filled database creates no duplicates,
+    but it is slow (about 900 API calls): use run_daily for the daily update.
+
+    Returns:
+        int: number of records sent to the database.
+    """
+
+    # 1. End: yesterday (today is not published yet)
+    yesterday = date.today() - timedelta(days=1)
+
+    # 2. Load the whole history and return the number of rows
+    return load_period(HISTORY_START, yesterday)
+
+
 if __name__ == "__main__":
-    total = run_daily()
-    print(f"Total: {total} rows saved")
+    # Usage: python src/pipeline.py [daily|history]
+
+    # 1. No mode given: show the usage and stop
+    if len(sys.argv) < 2:
+        print("Usage: python src/pipeline.py [daily|history]")
+        sys.exit(1)
+
+    # 2. Read the mode typed after the file name
+    mode = sys.argv[1]
+
+    # 3. Run the matching function (unknown mode: show the usage and stop)
+    if mode == "daily":
+        imported_records = run_daily()
+    elif mode == "history":
+        imported_records = run_history()
+    else:
+        print("Usage: python src/pipeline.py [daily|history]")
+        sys.exit(1)
+
+    # 4. Only reached by "daily" and "history": the else branch has stopped the program
+    print(f"Number of imported records: {imported_records}")
