@@ -1,0 +1,35 @@
+# Daily pipeline: reload the last 50 days of Elia imbalance prices into Neon
+name: Daily imbalance prices load
+
+on:
+  # Every day at 06:17 UTC (07:17 in Brussels in winter, 08:17 in summer)
+  schedule:
+    - cron: "17 6 * * *"
+  # Button "Run workflow" on GitHub, to run it by hand
+  workflow_dispatch:
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # 1. Get the code of the repository
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      # 2. Install Python
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.6"
+
+      # 3. Install the libraries listed in requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 4. Run the daily pipeline, with the database URL taken from the GitHub secret
+      - name: Run the daily pipeline
+        run: python src/pipeline.py daily
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
