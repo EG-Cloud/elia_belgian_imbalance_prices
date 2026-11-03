@@ -125,13 +125,3 @@ def fetch_range(start_date, end_date):
 
     # 4. Return the list
     return all_records
-
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
-
-    records = fetch_range(date(2026, 10, 22), date(2026, 10, 24))
-    print(f"Total: {len(records)} rows")

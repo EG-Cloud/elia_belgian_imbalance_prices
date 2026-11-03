@@ -122,13 +122,6 @@ def upsert_records(records):
     return len(records)
 
 if __name__ == "__main__":
+    # Create the raw schema and table (safe to run several times)
     run_sql_file("01_create_raw_table.sql")
-    print("SQL file executed")
-
-if __name__ == "__main__":
-    from extract import fetch_range
-    from datetime import date
-
-    records = fetch_range(date(2026, 10, 22), date(2026, 10, 24))
-    count = upsert_records(records)
-    print(f"{count} rows upserted")
+    print("Raw table ready")
