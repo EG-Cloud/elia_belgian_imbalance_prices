@@ -175,6 +175,8 @@ To use it on your own fork, add a repository secret named `DATABASE_URL` in **Se
 * **Belgian month boundaries.** In summer, 22:00 UTC on the last day of a month is already midnight of the next month in Brussels. Monthly aggregates must therefore be computed in Belgian time.
 * **Empty values.** `alpha_prime` is null at the start of the dataset and 0 afterwards (this component was neutralised with the MARI go-live).
 * **Units.** System imbalance is an average power (MW) over 15 minutes. The matching energy is MW × 0.25 h, to be used when computing costs.
+Price floor. On 6 April 2026 (Easter Monday), from 13:45 to 14:45 Belgian time, the imbalance price was exactly −15,000 EUR/MWh for five consecutive quarter-hours, with a long system and the decremental price at the same value. This is most likely a technical price limit. These rows are real extreme values and are kept in the analysis.
+
 
 ## Roadmap
 

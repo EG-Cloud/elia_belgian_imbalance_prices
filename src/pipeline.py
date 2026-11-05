@@ -2,7 +2,7 @@ import logging
 import sys
 from datetime import date, timedelta
 
-from db import upsert_records
+from db import run_quality_tests, upsert_records
 from extract import fetch_range
 
 # One logger for this file ("__main__" when run directly, "pipeline" if imported)
@@ -127,6 +127,7 @@ if __name__ == "__main__":
         # 3. Run the matching function (unknown mode: show the usage and stop)
         if mode == "daily":
             imported_records = run_daily()
+            run_quality_tests()
         elif mode == "history":
             imported_records = run_history()
         else:

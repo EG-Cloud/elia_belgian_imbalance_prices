@@ -78,11 +78,6 @@ def fetch_day(day):
         time.sleep(RETRY_WAIT_SECONDS)
         attempt = attempt + 1
 
-    # 5. Return the list of records
-    
-    records = data["results"]
-    return records
-
 
 def fetch_range(start_date, end_date):
     """
