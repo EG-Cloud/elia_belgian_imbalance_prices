@@ -121,7 +121,12 @@ def upsert_records(records):
 
     return len(records)
 
+# if __name__ == "__main__":
+#     # Create the raw schema and table (safe to run several times)
+#     run_sql_file("01_create_raw_table.sql")
+#     print("Raw table ready")
+
 if __name__ == "__main__":
     # Create the raw schema and table (safe to run several times)
-    run_sql_file("01_create_raw_table.sql")
-    print("Raw table ready")
+    run_sql_file("02_create_clean_view.sql")
+    print("Clean table ready")

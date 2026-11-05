@@ -119,17 +119,24 @@ if __name__ == "__main__":
         print("Usage: python src/pipeline.py [daily|history]")
         sys.exit(1)
 
-    # 2. Read the mode typed after the file name
-    mode = sys.argv[1]
+    try:
 
-    # 3. Run the matching function (unknown mode: show the usage and stop)
-    if mode == "daily":
-        imported_records = run_daily()
-    elif mode == "history":
-        imported_records = run_history()
-    else:
-        print("Usage: python src/pipeline.py [daily|history]")
+        # 2. Read the mode typed after the file name
+        mode = sys.argv[1]
+
+        # 3. Run the matching function (unknown mode: show the usage and stop)
+        if mode == "daily":
+            imported_records = run_daily()
+        elif mode == "history":
+            imported_records = run_history()
+        else:
+            print("Usage: python src/pipeline.py [daily|history]")
+            sys.exit(1)
+
+        # 4. Only reached by "daily" and "history": the else branch has stopped the program
+        logger.info(f"Run finished: {imported_records} records sent to the database")
+
+    except Exception:
+
+        logger.exception(f"The {mode} run did not succeed")
         sys.exit(1)
-
-    # 4. Only reached by "daily" and "history": the else branch has stopped the program
-    logger.info(f"Run finished: {imported_records} records sent to the database")
