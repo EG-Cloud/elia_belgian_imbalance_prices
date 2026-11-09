@@ -2,8 +2,8 @@
 
 Automated pipeline and analysis of Belgian electricity imbalance prices (Elia Open Data).
 
-> **Status:** Phase 1 (automated collection) complete. Phase 2 (SQL modelling) in progress.
-> See [docs/feasibility_note.md](docs/feasibility_note.md) for the full project scope.
+> **Status:** Phases 1 (automated collection) and 2 (SQL modelling) complete. Phase 3 (analysis and forecasting) in progress.
+> See [docs/feasibility_note.md](docs/feasibility_note.md) for the project scope and [docs/data_dictionary.md](docs/data_dictionary.md) for every table, view and column.
 
 ---
 
@@ -28,7 +28,7 @@ Analysis questions:
 | Automation | Daily scheduled run on GitHub Actions, no local machine needed |
 | Data engineering | Idempotent upserts, batch loading, retries on temporary errors, logging |
 | Security | No credentials in the code or the repository (`.env` locally, GitHub secret in CI) |
-| SQL modelling *(Phase 2)* | Raw, clean and analytics layers, with data quality tests |
+| SQL modelling | Raw, clean and analytics layers in PostgreSQL views, with 10 automated data quality tests |
 | Analysis and forecasting *(Phase 3)* | Price profiles, extreme prices, forecast evaluated against a simple baseline |
 
 ## Architecture
@@ -37,8 +37,9 @@ Analysis questions:
 flowchart LR
     A[Elia Open Data API<br/>dataset ods134] -->|requests, one call per day| B[Python pipeline<br/>src/]
     C[GitHub Actions<br/>daily schedule] -->|runs| B
-    B -->|upsert| D[(Neon PostgreSQL<br/>raw.imbalance_prices)]
-    D --> E[SQL layers<br/>clean / analytics]
+    B -->|upsert| D[(Neon PostgreSQL<br/>raw)]
+    D --> E[Views<br/>clean / analytics]
+    E --> G{{Quality tests<br/>tests/sql}}
     E --> F[Power BI report]
 ```
 
@@ -83,6 +84,38 @@ Price logic, verified on real rows: short system, price = incremental price + al
 
 **Time zones.** Timestamps are stored in UTC (`TIMESTAMPTZ`): no duplicated or missing quarter-hours on daylight saving days. Analysis is done in Belgian time (`Europe/Brussels`), because Elia's days and months follow Belgian time.
 
+## Data model
+
+| Layer | Objects | Role |
+|---|---|---|
+| `raw` | `imbalance_prices` (table) | Exact copy of the API, written by the pipeline |
+| `clean` | `imbalance_prices` (view) | Readable names, harmonised empty values, Belgian local time, business columns (system state, validation flag, energy, recomputed price) |
+| `analytics` | `calendar`, `public_holidays`, `price_thresholds`, `price_profile`, `daily_summary`, `extreme_prices` (views) | One view per analysis need, ready for Power BI |
+
+All layers above `raw` are views: they are always up to date, with no refresh step. Full column descriptions: [docs/data_dictionary.md](docs/data_dictionary.md).
+
+**Extreme prices** are defined once, in `analytics.price_thresholds`:
+
+* **negative price**: below 0 EUR/MWh, a risk for a BRP that is long (too much energy)
+* **high price**: above the 95th percentile of all published prices (278.64 EUR/MWh in November 2026), a risk for a BRP that is short
+
+## Data quality tests
+
+Each file in `tests/sql/` is a query that returns the rows failing a rule: 0 rows means the test passed. The tests run after every daily load, and a failure stops the run.
+
+| Test | Rule |
+|---|---|
+| `test_01` | No duplicated quarter-hour |
+| `test_02` | No missing quarter-hour between the first and the last one loaded |
+| `test_03` | Resolution is always 15 minutes |
+| `test_04` | Published price matches its components (one documented exception) |
+| `test_05` | No empty value in the key columns |
+| `test_06` | Prices between −15,000 and +15,000 EUR/MWh, imbalance between −5,000 and +5,000 MW |
+| `test_07` | Latest data is less than 2 days old |
+| `test_08` | Rows older than 50 days are all validated |
+| `test_09` | The public holiday list covers the latest year of data |
+| `test_10` | Every day of the data has a calendar row |
+
 ## Project structure
 
 ```
@@ -90,17 +123,26 @@ elia_belgian_imbalance_prices/
 ├── .github/workflows/
 │   └── daily.yml          # GitHub Actions: daily scheduled run
 ├── docs/
+│   ├── data_dictionary.md
 │   └── feasibility_note.md
 ├── exploration/
 │   └── explore_api.py     # first API exploration script
-├── sql/
-│   └── 01_create_raw_table.sql
+├── sql/                   # setup files, run in name order
+│   ├── 01_create_raw_table.sql
+│   ├── 02_create_clean_view.sql
+│   ├── 03_create_calendar.sql
+│   ├── 04_create_price_thresholds.sql
+│   ├── 05_create_price_profile.sql
+│   ├── 06_create_daily_summary.sql
+│   └── 07_create_extreme_prices.sql
 ├── src/
 │   ├── extract.py         # Elia API: fetch_day, fetch_range (with retries)
-│   ├── db.py              # Neon: connection, SQL file runner, upsert
+│   ├── db.py              # Neon: connection, SQL runner, upsert, quality tests
 │   └── pipeline.py        # entry point: load_period, run_daily, run_history
 ├── tests/
+│   └── sql/               # data quality tests (test_01 to test_10)
 ├── .env.example           # secrets needed, without their values
+├── CLAUDE.md              # coding conventions for AI-assisted work
 ├── requirements.txt
 └── README.md
 ```
@@ -137,13 +179,13 @@ DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
 
 `.env` is listed in `.gitignore` and must never be committed.
 
-### 3. Create the raw table
+### 3. Create the database objects and run the tests
 
 ```bash
 python src/db.py
 ```
 
-This runs `sql/01_create_raw_table.sql`, which creates the `raw` schema and the `raw.imbalance_prices` table. The script can be run several times safely (`IF NOT EXISTS`).
+This runs every file of `sql/` in name order (raw table, then the clean and analytics views), then the quality tests of `tests/sql/`. It can be run several times safely (`IF NOT EXISTS`, `CREATE OR REPLACE`). On an empty database, run it again after loading the data: the freshness test fails until data is present.
 
 ### 4. Load the data
 
@@ -162,7 +204,7 @@ The workflow [`.github/workflows/daily.yml`](.github/workflows/daily.yml) runs `
 1. check out the repository
 2. set up Python
 3. install the dependencies from `requirements.txt`
-4. run the daily pipeline, with `DATABASE_URL` provided by a **GitHub repository secret**
+4. run the daily pipeline and the quality tests, with `DATABASE_URL` provided by a **GitHub repository secret**
 
 It can also be started by hand from the **Actions** tab, with **Run workflow**.
 
@@ -173,16 +215,17 @@ To use it on your own fork, add a repository secret named `DATABASE_URL` in **Se
 * **Provisional values.** Recent rows are `NotValidated` or `DataIssue` until Elia validates them. The 50-day window replaces them automatically.
 * **Incomplete latest day.** The most recent UTC day can miss its last quarter-hours: they belong to the next Belgian day, which is not published yet (for example, 23:00 to 23:45 UTC in winter). They are completed by the next daily run.
 * **Belgian month boundaries.** In summer, 22:00 UTC on the last day of a month is already midnight of the next month in Brussels. Monthly aggregates must therefore be computed in Belgian time.
+* **Price not matching its components.** On 30 August 2024 at 12:15 UTC, the published price (−221 EUR/MWh) differs by 16.49 EUR/MWh from the price rebuilt from its components. The cause is not visible in the published data. It is the only case among more than 86,000 rows, documented as a known exception in `test_04`.
+* **Price floor.** On Easter Monday 2026, from 13:45 to 14:45 Belgian time, the price was exactly −15,000 EUR/MWh for five consecutive quarter-hours (long system, decremental price at the same value). This is most likely a technical price limit. These real extreme values are kept in the analysis.
+* **Seasons.** Seasons are meteorological (whole months). With data since May 2024, each season is observed only two or three times: seasonal differences are described, not generalised.
 * **Empty values.** `alpha_prime` is null at the start of the dataset and 0 afterwards (this component was neutralised with the MARI go-live).
 * **Units.** System imbalance is an average power (MW) over 15 minutes. The matching energy is MW × 0.25 h, to be used when computing costs.
-Price floor. On 6 April 2026 (Easter Monday), from 13:45 to 14:45 Belgian time, the imbalance price was exactly −15,000 EUR/MWh for five consecutive quarter-hours, with a long system and the decremental price at the same value. This is most likely a technical price limit. These rows are real extreme values and are kept in the analysis.
-
 
 ## Roadmap
 
 - [x] **Phase 0** · Feasibility: API exploration, data understanding, [feasibility note](docs/feasibility_note.md)
 - [x] **Phase 1** · Automated collection: extraction, Neon database, idempotent upsert, history load, daily GitHub Actions run, logging and retries
-- [ ] **Phase 2** · SQL modelling: clean and analytics layers, data quality tests
+- [x] **Phase 2** · SQL modelling: clean and analytics layers, 10 data quality tests, [data dictionary](docs/data_dictionary.md)
 - [ ] **Phase 3** · Analysis and forecasting: price profiles, extreme prices, forecast evaluated against a simple baseline
 - [ ] **Phase 4** · Reporting: Power BI report, final documentation and limitations
 
