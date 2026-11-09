@@ -6,7 +6,8 @@ All objects live in the Neon PostgreSQL database, in three schemas:
 |---|---|---|
 | `raw` | Exact copy of the Elia API (dataset `ods134`). Never modified by hand. | `src/pipeline.py` (upsert) |
 | `clean` | Readable names, harmonised empty values, Belgian local time, business columns. | `sql/02_create_clean_view.sql` |
-| `analytics` | One view per analysis need, ready for Power BI. | `sql/03_` to `sql/07_` |
+| `analytics` | One view per analysis need, ready for Power BI. | `sql/03_` to `sql/08_` |
+| `forecast` | Forecast backtest results and their error summaries. | `src/forecast.py` (table), `sql/09_` and `sql/10_` |
 
 Conventions:
 
@@ -171,6 +172,67 @@ View. One row per quarter-hour with a negative or high price.
 | `system_imbalance_mw` | NUMERIC | MW | System imbalance. |
 | `system_state` | TEXT | | `short` or `long`. |
 | `is_validated` | BOOLEAN | | True when the price is validated. |
+
+---
+
+## analytics.hourly_prices
+
+View. One row per Belgian day × hour. Input of the forecast.
+
+| Column | Type | Unit | Description |
+|---|---|---|---|
+| `date_local` | DATE | | Belgian calendar day. |
+| `hour_local` | INTEGER | | Belgian hour, 0 to 23. Hour 2 is missing on the spring clock change, and averages 8 quarter-hours on the autumn one. |
+| `day_type` | TEXT | | `weekday`, `weekend` or `holiday`. |
+| `avg_price_eur_mwh` | NUMERIC | EUR/MWh | Mean price of the quarter-hours of the hour. |
+| `is_validated` | BOOLEAN | | True when every quarter-hour of the hour is validated. |
+
+---
+
+## forecast.backtest_results
+
+Table, written by `src/forecast.py`. One row per model × forecast day × hour. Each run of a model replaces its rows. Primary key: `model_name`, `date_local`, `hour_local`.
+
+| Column | Type | Unit | Description |
+|---|---|---|---|
+| `model_name` | TEXT | | Forecast settings, e.g. `reference_28d`, `A_window_56d`. |
+| `date_local` | DATE | | Forecast day (Belgian). |
+| `hour_local` | INTEGER | | Belgian hour. |
+| `day_type` | TEXT | | `weekday`, `weekend` or `holiday`. |
+| `actual_eur_mwh` | NUMERIC | EUR/MWh | Actual average price of the hour. |
+| `forecast_eur_mwh` | NUMERIC | EUR/MWh | Forecast made with data known up to two days before. |
+| `abs_error_eur_mwh` | NUMERIC | EUR/MWh | Absolute difference between actual and forecast. |
+| `created_at` | TIMESTAMPTZ | UTC | Time the row was written. |
+
+---
+
+## forecast.model_summary
+
+View. One row per model.
+
+| Column | Type | Unit | Description |
+|---|---|---|---|
+| `model_name` | TEXT | | Forecast settings. |
+| `first_day`, `last_day` | DATE | | Tested period. |
+| `nb_hours` | INTEGER | | Number of tested hours. |
+| `mae_eur_mwh` | NUMERIC | EUR/MWh | Mean absolute error: main metric. |
+| `rmse_eur_mwh` | NUMERIC | EUR/MWh | Root mean squared error: dominated by a few extreme hours, given for reference. |
+
+---
+
+## forecast.error_by_hour_season
+
+View. One row per model × Belgian hour × season.
+
+| Column | Type | Unit | Description |
+|---|---|---|---|
+| `model_name` | TEXT | | Forecast settings. |
+| `hour_local` | INTEGER | | Belgian hour. |
+| `season` | TEXT | | Meteorological season. |
+| `nb_hours` | INTEGER | | Number of tested hours in the group. |
+| `mae_eur_mwh` | NUMERIC | EUR/MWh | Mean absolute error of the group. |
+| `avg_actual_eur_mwh` | NUMERIC | EUR/MWh | Mean actual price. |
+| `avg_forecast_eur_mwh` | NUMERIC | EUR/MWh | Mean forecast. |
 
 ---
 

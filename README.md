@@ -2,7 +2,7 @@
 
 Automated pipeline and analysis of Belgian electricity imbalance prices (Elia Open Data).
 
-> **Status:** Phases 1 (automated collection) and 2 (SQL modelling) complete. Phase 3 (analysis and forecasting) in progress.
+> **Status:** Phases 1 to 3 complete (automated collection, SQL modelling, analysis and forecast evaluation). Phase 4 (Power BI report) in progress.
 > See [docs/feasibility_note.md](docs/feasibility_note.md) for the project scope and [docs/data_dictionary.md](docs/data_dictionary.md) for every table, view and column.
 
 ---
@@ -29,7 +29,7 @@ Analysis questions:
 | Data engineering | Idempotent upserts, batch loading, retries on temporary errors, logging |
 | Security | No credentials in the code or the repository (`.env` locally, GitHub secret in CI) |
 | SQL modelling | Raw, clean and analytics layers in PostgreSQL views, with 10 automated data quality tests |
-| Analysis and forecasting *(Phase 3)* | Price profiles, extreme prices, forecast evaluated against a simple baseline |
+| Forecast evaluation | Day-ahead hourly forecast, rolling backtest without look-ahead, settings chosen on a separate validation period, honest comparison with a baseline |
 
 ## Architecture
 
@@ -90,7 +90,8 @@ Price logic, verified on real rows: short system, price = incremental price + al
 |---|---|---|
 | `raw` | `imbalance_prices` (table) | Exact copy of the API, written by the pipeline |
 | `clean` | `imbalance_prices` (view) | Readable names, harmonised empty values, Belgian local time, business columns (system state, validation flag, energy, recomputed price) |
-| `analytics` | `calendar`, `public_holidays`, `price_thresholds`, `price_profile`, `daily_summary`, `extreme_prices` (views) | One view per analysis need, ready for Power BI |
+| `analytics` | `calendar`, `public_holidays`, `price_thresholds`, `price_profile`, `daily_summary`, `extreme_prices`, `hourly_prices` (views) | One view per analysis need, ready for Power BI |
+| `forecast` | `backtest_results` (table), `model_summary`, `error_by_hour_season` (views) | Forecast backtest results, written by `src/forecast.py` |
 
 All layers above `raw` are views: they are always up to date, with no refresh step. Full column descriptions: [docs/data_dictionary.md](docs/data_dictionary.md).
 
@@ -116,6 +117,47 @@ Each file in `tests/sql/` is a query that returns the rows failing a rule: 0 row
 | `test_09` | The public holiday list covers the latest year of data |
 | `test_10` | Every day of the data has a calendar row |
 
+## Results
+
+### When is an imbalance most expensive?
+
+Profile of the imbalance price by Belgian hour, on spring weekdays (`analytics.price_profile`):
+
+* **Midday solar dip.** From 10:00 to 15:00, negative prices become frequent: about one quarter-hour in three at 12:00 and 13:00 (30.7% and 32.6%), against 1 to 3% in the evening. A BRP that is **long** (too much energy) is most exposed at midday.
+* **Morning and evening ramps.** High prices (above 278.64 EUR/MWh) are most frequent at 07:00 to 08:00 (6 to 7%) and at 19:00 (8.2%, with the highest average price of the day). A BRP that is **short** is most exposed during these ramps.
+* **08:00 carries both risks**: 7.4% negative prices and 7.3% high prices in the same hour.
+* **Mean and median diverge.** At 12:00 the mean (46.95) is far above the median (29.17), pulled up by a few very high prices; at 04:00 it is below (83.68 against 98.35), pulled down by a few very negative ones. Both are reported: the median describes a typical slot, the mean the cost over the period.
+
+These patterns are observed on two springs (2025 and 2026): they describe what happened, not a law.
+
+### Can the price be forecast the day before?
+
+**Setup** (`src/forecast.py`):
+
+* **Target**: the average price of each of the 24 Belgian hours of day D, forecast on the morning of D-1 with data known up to D-2 (Elia publishes with a delay).
+* **Reference to beat**: median of the same hour over the last 28 days, same kind of day (working day, or weekend and holiday).
+* **Candidates**: the same median with windows of 7 to 56 days (option A), and blends of the last 7 days with a 28 or 56-day profile (option B).
+* **Rolling backtest**: every day is forecast with past data only, then compared with the actual prices.
+* **Three separate periods**: history from May 2024; validation from July to September 2025, used only to choose among the 10 candidates; test from October 2025 to September 2026 (8,759 hours, all validated), used once for the final result.
+* **Metric**: mean absolute error (MAE), in EUR/MWh.
+
+**Results on the test period** (`forecast.model_summary`):
+
+| Model | MAE (EUR/MWh) | RMSE (EUR/MWh) |
+|---|---|---|
+| Reference: 28-day hourly median | 47.19 | 182.34 |
+| Best on validation: 56-day hourly median | 46.26 | 182.28 |
+
+The selected model reduces the error by **2%**. Longer windows always did better on validation, and giving weight to the last 7 days always did worse.
+
+**Where the forecast fails** (`forecast.error_by_hour_season`): the largest errors are at midday in spring (14:00: 217.80 EUR/MWh, 13:00: 113.73), largely driven by the Easter Monday 2026 price floor (−15,000 EUR/MWh from 13:45 to 14:45), then midday and evening hours in summer and autumn (around 60 to 72). The most reliable hours are summer nights (01:00 to 04:00, about 25 to 30 EUR/MWh).
+
+**Conclusion.** Recent days add noise rather than signal: a period of high or low prices does not carry over to the next day. What repeats is the shape of the day (midday dip, morning and evening peaks), best estimated over a long window. With past prices only, the hourly imbalance price is hard to forecast the day before: the stable daily profile is the best predictor found, and the remaining fluctuations, which make most of the error, are not predictable from price history. The RMSE, four times the MAE, shows how much a few extreme hours weigh.
+
+For a BRP, a precise hour-by-hour forecast is not realistic with this data. What is useful is knowing **where the risks are**: the hours where negative and high prices concentrate, as shown above.
+
+**Next step.** The real drivers of imbalances are forecast errors of wind, solar and consumption. Adding these inputs (also published by Elia) is the most promising way to improve the forecast.
+
 ## Project structure
 
 ```
@@ -134,11 +176,15 @@ elia_belgian_imbalance_prices/
 │   ├── 04_create_price_thresholds.sql
 │   ├── 05_create_price_profile.sql
 │   ├── 06_create_daily_summary.sql
-│   └── 07_create_extreme_prices.sql
+│   ├── 07_create_extreme_prices.sql
+│   ├── 08_create_hourly_prices.sql
+│   ├── 09_create_forecast_table.sql
+│   └── 10_create_forecast_errors.sql
 ├── src/
 │   ├── extract.py         # Elia API: fetch_day, fetch_range (with retries)
 │   ├── db.py              # Neon: connection, SQL runner, upsert, quality tests
-│   └── pipeline.py        # entry point: load_period, run_daily, run_history
+│   ├── pipeline.py        # entry point: load_period, run_daily, run_history
+│   └── forecast.py        # baseline forecast, backtest, model selection
 ├── tests/
 │   └── sql/               # data quality tests (test_01 to test_10)
 ├── .env.example           # secrets needed, without their values
@@ -195,6 +241,9 @@ python src/pipeline.py history
 
 # Daily update: reload the last 50 days
 python src/pipeline.py daily
+
+# Forecast evaluation: choose settings on validation, evaluate on test, store results
+python src/forecast.py
 ```
 
 ## Automation
@@ -226,13 +275,15 @@ To use it on your own fork, add a repository secret named `DATABASE_URL` in **Se
 - [x] **Phase 0** · Feasibility: API exploration, data understanding, [feasibility note](docs/feasibility_note.md)
 - [x] **Phase 1** · Automated collection: extraction, Neon database, idempotent upsert, history load, daily GitHub Actions run, logging and retries
 - [x] **Phase 2** · SQL modelling: clean and analytics layers, 10 data quality tests, [data dictionary](docs/data_dictionary.md)
-- [ ] **Phase 3** · Analysis and forecasting: price profiles, extreme prices, forecast evaluated against a simple baseline
+- [x] **Phase 3** · Analysis and forecasting: price profiles, extreme prices, day-ahead forecast evaluated against a baseline
 - [ ] **Phase 4** · Reporting: Power BI report, final documentation and limitations
 
 ## Limitations
 
 * About two and a half years of history since the MARI go-live: enough for daily and seasonal patterns, limited for long-term trends.
 * Analysis is based on public, aggregated system data. It does not include the position of any specific BRP.
+* The forecast uses past prices only. Wind, solar and load forecasts, the main drivers of imbalances, are not included.
+* The forecast is evaluated on one year (October 2025 to September 2026). A 2% improvement on a single year is small and may partly depend on that year.
 * The reuse terms of the Elia Open Data portal are to be confirmed before any public reuse of the data.
 
 ## Author
