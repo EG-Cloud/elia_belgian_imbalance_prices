@@ -36,6 +36,32 @@ CANDIDATE_SETTINGS = [
     {"name": "B_56d_7d_w75", "long_window_days": 56, "short_window_days": 7, "short_weight": 0.75},
 ]
 
+DELETE_RESULTS_QUERY = """
+    DELETE FROM forecast.backtest_results
+    WHERE model_name = %(model_name)s;
+"""
+
+INSERT_RESULT_QUERY = """
+    INSERT INTO forecast.backtest_results (
+        model_name,
+        date_local,
+        hour_local,
+        day_type,
+        actual_eur_mwh,
+        forecast_eur_mwh,
+        abs_error_eur_mwh
+    )
+    VALUES (
+        %(model_name)s,
+        %(date_local)s,
+        %(hour_local)s,
+        %(day_type)s,
+        %(actual_eur_mwh)s,
+        %(forecast_eur_mwh)s,
+        %(abs_error_eur_mwh)s
+    );
+"""
+
 HOURLY_PRICES_QUERY = """
     SELECT
         date_local,
@@ -227,6 +253,44 @@ def choose_best_settings(hourly_prices):
     return best_settings
 
 
+def save_backtest_results(results, model_name):
+    """
+    Write backtest results to forecast.backtest_results, replacing the model's previous rows.
+
+    Delete and insert run in one transaction: if the insert fails, the previous
+    results are kept.
+
+    Args:
+        results (pd.DataFrame): output of backtest.
+        model_name (str): name stored with each row, e.g. "reference_28d".
+
+    Returns:
+        int: number of rows written.
+    """
+
+    # pandas values are converted to plain Python types for psycopg
+    records = []
+    for index, row in results.iterrows():
+        record = {
+            "model_name": model_name,
+            "date_local": row["date_local"],
+            "hour_local": int(row["hour_local"]),
+            "day_type": row["day_type"],
+            "actual_eur_mwh": float(row["avg_price_eur_mwh"]),
+            "forecast_eur_mwh": float(row["forecast_eur_mwh"]),
+            "abs_error_eur_mwh": float(row["abs_error"]),
+        }
+        records.append(record)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(DELETE_RESULTS_QUERY, {"model_name": model_name})
+            cur.executemany(INSERT_RESULT_QUERY, records)
+
+    logger.info(f"Saved {len(records)} rows for {model_name}")
+    return len(records)
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -249,3 +313,7 @@ if __name__ == "__main__":
     logger.info(f"Test | {REFERENCE_SETTINGS['name']:<14} | {len(reference_results)} hours | MAE = {reference_mae:.2f} EUR/MWh")
     logger.info(f"Test | {best_settings['name']:<14} | {len(best_results)} hours | MAE = {best_mae:.2f} EUR/MWh")
     logger.info(f"Skill vs reference: {skill:.1%}")
+
+    # 3. Store the test results for analysis and Power BI
+    save_backtest_results(reference_results, REFERENCE_SETTINGS["name"])
+    save_backtest_results(best_results, best_settings["name"])
