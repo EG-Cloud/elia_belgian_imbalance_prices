@@ -2,7 +2,7 @@
 
 Automated pipeline and analysis of Belgian electricity imbalance prices (Elia Open Data).
 
-> **Status:** Phases 1 to 3 complete (automated collection, SQL modelling, analysis and forecast evaluation). Phase 4 (Power BI report) in progress.
+> **Status:** complete. The pipeline runs every day on GitHub Actions; the analysis, forecast evaluation and Power BI report cover data up to November 2026.
 > See [docs/feasibility_note.md](docs/feasibility_note.md) for the project scope and [docs/data_dictionary.md](docs/data_dictionary.md) for every table, view and column.
 
 ---
@@ -29,6 +29,7 @@ Analysis questions:
 | Data engineering | Idempotent upserts, batch loading, retries on temporary errors, logging |
 | Security | No credentials in the code or the repository (`.env` locally, GitHub secret in CI) |
 | SQL modelling | Raw, clean and analytics layers in PostgreSQL views, with 10 automated data quality tests |
+| Reporting | Three-page Power BI report built on the analytics views |
 | Forecast evaluation | Day-ahead hourly forecast, rolling backtest without look-ahead, settings chosen on a separate validation period, honest comparison with a baseline |
 
 ## Architecture
@@ -84,6 +85,24 @@ Price logic, verified on real rows: short system, price = incremental price + al
 
 **Time zones.** Timestamps are stored in UTC (`TIMESTAMPTZ`): no duplicated or missing quarter-hours on daylight saving days. Analysis is done in Belgian time (`Europe/Brussels`), because Elia's days and months follow Belgian time.
 
+## Power BI report
+
+The report ([`powerbi/elia_imbalance_prices.pbix`](powerbi/elia_imbalance_prices.pbix)) answers the business question in three pages.
+
+**1. Overview**: average price, share of negative and high prices, daily price over the whole period, and the share of extreme quarter-hours per month.
+
+![Overview page](docs/images/overview.png)
+
+**2. When is an imbalance most expensive?**: price profile by Belgian hour, filtered by day type and season, with a heat map of negative prices by hour and season.
+
+![Risk by hour page](docs/images/risk_by_hour.png)
+
+**3. Can the price be forecast the day before?**: error of the reference and of the best model, actual against forecast prices for a chosen day, and a heat map of the forecast error by hour and season.
+
+![Forecast page](docs/images/forecast.png)
+
+The report uses Import mode on the `analytics` and `forecast` views only. To refresh it, open the file in Power BI Desktop and enter your own database credentials.
+
 ## Data model
 
 | Layer | Objects | Role |
@@ -130,6 +149,10 @@ Profile of the imbalance price by Belgian hour, on spring weekdays (`analytics.p
 
 These patterns are observed on two springs (2025 and 2026): they describe what happened, not a law.
 
+### Autumn 2026: a period of sustained tension
+
+From early October 2026, the average daily price rose steadily: from about 150 to 200 EUR/MWh in early October to 250 to 430 EUR/MWh at the end of October and in early November, with up to 47% of the November quarter-hours above the high-price threshold. Over the same period, the system was short 60 to 90% of the time: energy was missing most of the day, Elia activated expensive upward offers, and the imbalance price followed. These rows are not validated yet by Elia, and November 2026 is a partial month. This period is after the forecast test period and does not affect the forecast results.
+
 ### Can the price be forecast the day before?
 
 **Setup** (`src/forecast.py`):
@@ -165,8 +188,12 @@ elia_belgian_imbalance_prices/
 ├── .github/workflows/
 │   └── daily.yml          # GitHub Actions: daily scheduled run
 ├── docs/
+│   ├── images/            # screenshots of the Power BI report
 │   ├── data_dictionary.md
-│   └── feasibility_note.md
+│   ├── feasibility_note.md
+│   └── project_walkthrough.pdf
+├── powerbi/
+│   └── elia_imbalance_prices.pbix
 ├── exploration/
 │   └── explore_api.py     # first API exploration script
 ├── sql/                   # setup files, run in name order
@@ -276,7 +303,7 @@ To use it on your own fork, add a repository secret named `DATABASE_URL` in **Se
 - [x] **Phase 1** · Automated collection: extraction, Neon database, idempotent upsert, history load, daily GitHub Actions run, logging and retries
 - [x] **Phase 2** · SQL modelling: clean and analytics layers, 10 data quality tests, [data dictionary](docs/data_dictionary.md)
 - [x] **Phase 3** · Analysis and forecasting: price profiles, extreme prices, day-ahead forecast evaluated against a baseline
-- [ ] **Phase 4** · Reporting: Power BI report, final documentation and limitations
+- [x] **Phase 4** · Reporting: three-page Power BI report, final documentation, [project walkthrough](docs/project_walkthrough.pdf)
 
 ## Limitations
 
@@ -284,7 +311,12 @@ To use it on your own fork, add a repository secret named `DATABASE_URL` in **Se
 * Analysis is based on public, aggregated system data. It does not include the position of any specific BRP.
 * The forecast uses past prices only. Wind, solar and load forecasts, the main drivers of imbalances, are not included.
 * The forecast is evaluated on one year (October 2025 to September 2026). A 2% improvement on a single year is small and may partly depend on that year.
-* The reuse terms of the Elia Open Data portal are to be confirmed before any public reuse of the data.
+
+## Data source and licence
+
+Data: **Elia Transmission Belgium**, [Open Data Platform](https://opendata.elia.be), dataset `ods134` (imbalance prices per quarter-hour), licensed under [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://www.elia.be/en/grid-data/elia-open-data-license).
+
+The data were transformed for this project: renamed, converted to Belgian local time, aggregated by hour, day and season, and enriched with derived columns. The Power BI file contains a snapshot of these aggregated data.
 
 ## Author
 
