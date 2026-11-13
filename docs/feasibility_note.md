@@ -1,6 +1,6 @@
 # Feasibility Note: Belgian Imbalance Prices (Elia Open Data)
 
-*Date: 26 October 2026. Status: Phase 0 complete. Verdict: feasible.*
+*Date: 26 October 2026, updated 13 November 2026. Status: project complete. Verdict: feasible.*
 
 ## 1. Objective
 
@@ -70,6 +70,7 @@ Alternative considered: the `exports` endpoint returns the whole dataset in one 
 | Provisional values | Recent rows are `NotValidated` or `DataIssue` | Re-fetch 50-day window, keep `qualitystatus`, flag in analysis |
 | Incomplete latest day | 25/10/2026 had 92 rows on 26/10: the 4 last UTC quarter-hours belong to the Belgian day not yet published | Never treat the latest day as final; covered by the 50-day re-fetch |
 | Daylight saving time | Timestamps are UTC, so no duplicated or missing quarter-hours (verified: 24/10/2026 has 96 rows) | Store in UTC (`TIMESTAMPTZ`), convert to `Europe/Brussels` only for analysis |
+| Belgian day and month boundaries *(found during the project)* | Elia validates and publishes by Belgian day: in summer, 22:00 UTC on the last day of a month already belongs to the next month in Brussels | Compute daily and monthly figures on the Belgian local date (`date_local`) |
 | Default order | Records come back unsorted without `order_by` | Always sort explicitly |
 | Types | `datetime` arrives as text in pandas | Convert with `pd.to_datetime(..., utc=True)` |
 | Two kinds of "empty" | `alpha_prime` is null early on, 0 later | Harmonise during cleaning and document |
@@ -79,7 +80,7 @@ Alternative considered: the `exports` endpoint returns the whole dataset in one 
 
 ## 6. Open questions
 
-* **Licence and reuse terms** of the Elia Open Data portal: not confirmed. To check before publishing the repository.
+* ~~Licence and reuse terms~~ **Resolved**: the Elia Open Data is licensed under CC BY 4.0 (reuse allowed with attribution). Attribution added to the README.
 * **Exact alpha formula**: the inputs are known (measured and estimated SI), not the full calculation. Not needed for the analysis.
 * **Publication time** of the daily refresh: to observe once collection runs.
 * **API stability**: the version used (Explore API v2.1) will be documented in the README.
@@ -90,4 +91,4 @@ Scheduled Python collection (GitHub Actions) → hosted PostgreSQL (Supabase or 
 
 ## 8. Verdict
 
-**Feasible.** The data is public, free, documented by its schema, reachable without a key, and the quota is far above our needs (about 50 calls per day). The main risks (provisional values, incomplete latest day, time zones) are known and handled by design. Remaining blocker before publication: confirm the licence.
+**Feasible.** The data is public, free, documented by its schema, reachable without a key, and the quota is far above our needs (about 50 calls per day). The main risks (provisional values, incomplete latest day, time zones) are known and handled by design. The data licence (CC BY 4.0) allows public reuse with attribution.
